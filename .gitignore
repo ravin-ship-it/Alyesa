@@ -1,0 +1,6 @@
+target/
+**/*.rs.bk
+.alyesa_rs_history
+.alyesa.env
+.last_output.txt
+.test_script.txt
