@@ -4,3 +4,4 @@ target/
 .alyesa.env
 .last_output.txt
 .test_script.txt
+test_*

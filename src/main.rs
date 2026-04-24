@@ -271,6 +271,52 @@ _alyesa_execute_loop() {{
     rm -f "$ALYESA_MSG_FILE"
 }}
 
+_alyesa_precmd() {{
+    if [[ -n "$ALYESA_QUEUED_QUICK" ]]; then
+        local user_cmd="$ALYESA_QUEUED_QUICK"
+        ALYESA_QUEUED_QUICK=""
+        
+        local old_ls="$(alias ls 2>/dev/null)"
+        local old_grep="$(alias grep 2>/dev/null)"
+        alias ls="ls -C --color=always" 2>/dev/null
+        alias grep="grep --color=always" 2>/dev/null
+        export CLICOLOR_FORCE=1 FORCE_COLOR=1
+        
+        touch "$ALYESA_OUT_FILE"
+        {{ eval "$user_cmd"; }} > "$ALYESA_OUT_FILE" 2>&1
+        local eval_exit=$?
+        
+        if [[ -n "$old_ls" ]]; then eval "$old_ls"; else unalias ls 2>/dev/null; fi
+        if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
+        unset CLICOLOR_FORCE FORCE_COLOR
+        
+        cat "$ALYESA_OUT_FILE"
+        
+        print -P "%F{{226}}Note to Alyesa (press Enter to skip)...%f"
+        local note
+        read -r "note?[Xen@Termux] ❯ " </dev/tty
+        
+        if [[ -n "$note" ]]; then
+            local out_content="$(cat "$ALYESA_OUT_FILE")"
+            if [[ -z "$out_content" ]]; then out_content="(No output)"; fi
+            local msg="[Xen ran: $user_cmd (Exit: $eval_exit)]\n\`\`\`\n$(echo "$out_content" | tail -c 2000)\n\`\`\`\n[Xen says]: $note"
+            _alyesa_execute_loop "--process-file" "$msg"
+        else
+            print -P "%F{{245}}Skipped.%f"
+        fi
+        
+        rm -f "$ALYESA_OUT_FILE"
+    fi
+
+    if [[ -n "$ALYESA_QUEUED_CHAT" ]]; then
+        local user_input="$ALYESA_QUEUED_CHAT"
+        ALYESA_QUEUED_CHAT=""
+        _alyesa_execute_loop "--process" "$user_input"
+    fi
+}}
+
+precmd_functions+=(_alyesa_precmd)
+
 alyesa-enter() {{
     if [[ -z "$BUFFER" ]]; then
         zle accept-line
@@ -315,64 +361,20 @@ alyesa-enter() {{
     fi
 
     if [[ "$BUFFER" == \!* ]]; then
-        local user_cmd="${{BUFFER:1}}"
         local raw_buf="$BUFFER"
+        ALYESA_QUEUED_QUICK="${{raw_buf:1}}"
         
-        # 1. Visually restore the command over the cleared prompt
         print -s "$raw_buf"
-        zle -I
-        # Move UP one line (since zle -I moved down), clear line, and print exact user input
-        print -P -n "\033[1A\r\033[2K%F{{51}}Xen %f${{ALYESA_ARROW_COLOR}}❯%f $raw_buf\n"
-        BUFFER=""
-        
-        # 2. Synchronous execution
-        local old_ls="$(alias ls 2>/dev/null)"
-        local old_grep="$(alias grep 2>/dev/null)"
-        alias ls="ls -C --color=always" 2>/dev/null
-        alias grep="grep --color=always" 2>/dev/null
-        export CLICOLOR_FORCE=1 FORCE_COLOR=1
-        
-        touch "$ALYESA_OUT_FILE"
-        {{ eval "$user_cmd"; }} > "$ALYESA_OUT_FILE" 2>&1
-        local eval_exit=$?
-        
-        if [[ -n "$old_ls" ]]; then eval "$old_ls"; else unalias ls 2>/dev/null; fi
-        if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
-        unset CLICOLOR_FORCE FORCE_COLOR
-        
-        cat "$ALYESA_OUT_FILE"
-        
-        print -P "%F{{226}}Note to Alyesa (press Enter to skip)...%f"
-        local note
-        read -r "note?[Xen@Termux] ❯ " </dev/tty
-        
-        if [[ -n "$note" ]]; then
-            local out_content="$(cat "$ALYESA_OUT_FILE")"
-            if [[ -z "$out_content" ]]; then out_content="(No output)"; fi
-            local msg="[Xen ran: $user_cmd (Exit: $eval_exit)]\n\`\`\`\n$(echo "$out_content" | tail -c 2000)\n\`\`\`\n[Xen says]: $note"
-            _alyesa_execute_loop "--process-file" "$msg"
-        else
-            print -P "%F{{245}}Skipped.%f"
-        fi
-        
-        rm -f "$ALYESA_OUT_FILE"
-        
-        # 3. Request fresh prompt from Zsh
-        zle accept-line
+        zle send-break
         return
     fi
 
     if [[ "$ALYESA_MODE" == "chat" ]]; then
         local user_input="$BUFFER"
+        ALYESA_QUEUED_CHAT="$user_input"
+        
         print -s "$user_input"
-        
-        zle -I
-        print -P -n "\r\033[2K%F{{51}}Xen %f${{ALYESA_ARROW_COLOR}}❯%f $user_input\n"
-        BUFFER=""
-        
-        _alyesa_execute_loop "--process" "$user_input"
-        
-        zle accept-line
+        zle send-break
         return
     fi
 }}
