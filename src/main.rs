@@ -32,44 +32,40 @@ fn load_env() {
     let _ = dotenvy::from_path(&env_path);
 }
 
-fn get_git_info(cwd: &PathBuf) -> String {
+fn get_git_info(cwd: &PathBuf) -> (String, String) {
     let branch_output = Command::new("git").current_dir(cwd).args(["branch", "--show-current"]).output();
     let branch = if let Ok(o) = branch_output {
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     } else { "".to_string() };
 
-    if branch.is_empty() { return "".to_string(); }
+    if branch.is_empty() {
+        return ("".to_string(), format!(" {}󱈸{} {}󰚌{}", C_D_PINK, C_RESET, C_ORANGE, C_RESET));
+    }
 
     let status_output = Command::new("git").current_dir(cwd).args(["status", "--porcelain"]).output();
     let stat = if let Ok(o) = status_output { String::from_utf8_lossy(&o.stdout).to_string() } else { "".to_string() };
 
     let mut icons = String::new();
     if !stat.is_empty() {
-        // Staged: [AMDR] at start of line
         let re_staged = Regex::new(r"(?m)^[AMDR]").unwrap();
         if re_staged.is_match(&stat) { icons.push_str(&format!(" {}󰄬{}", C_VIB_GREEN, C_RESET)); }
-        
-        // Modified/Alert: [AMDR] at second char
         let re_mod = Regex::new(r"(?m)^.[AMDR]").unwrap();
         if re_mod.is_match(&stat) { icons.push_str(&format!(" {}󱈸{}", C_D_PINK, C_RESET)); }
-
-        // Untracked: ?? at start
         let re_untracked = Regex::new(r"(?m)^\?\?").unwrap();
         if re_untracked.is_match(&stat) { icons.push_str(&format!(" {}󰚌{}", C_ORANGE, C_RESET)); }
     } else {
         icons.push_str(&format!(" {}✨{}", C_VIB_GREEN, C_RESET));
     }
 
-    format!(" {}on{} {}󰊢 {}({}{}{}){}{}", C_LAV_PINK, C_RESET, C_MINT, C_LAV_PINK, C_D_PINK, branch, C_LAV_PINK, C_RESET, icons)
+    (format!(" {}on{} {}󰊢 {}({}{}{}){}", C_LAV_PINK, C_RESET, C_MINT, C_LAV_PINK, C_D_PINK, branch, C_LAV_PINK, C_RESET), icons)
 }
 
 fn build_prompt(cwd: &PathBuf, user: &str, color: &str, is_shell_mode: bool) -> String {
     let dir_name = cwd.file_name().unwrap_or_default().to_string_lossy();
-    let git_visual = get_git_info(cwd);
-    // Use Mint (122) for Chat Mode arrow, Orange (208) for Shell Mode arrow
+    let (branch_str, icons) = get_git_info(cwd);
     let arrow_color = if is_shell_mode && user == "Xen" { C_ORANGE } else { C_MINT };
-    format!("\n{}{}{} {}{}{}\n{}{} {}❯{} ", 
-        C_CYAN, "󰉋 ", C_VIB_GREEN, dir_name, C_RESET, git_visual, color, user, arrow_color, C_RESET)
+    format!("\n{}{}{} {}{}{}{}\n{}{} {}❯{} ", 
+        C_CYAN, "󰉋 ", C_VIB_GREEN, dir_name, C_RESET, branch_str, icons, color, user, arrow_color, C_RESET)
 }
 
 fn get_context_string(cwd: &PathBuf) -> String {
@@ -96,11 +92,18 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
     let context = get_context_string(&state.cwd);
     let system_prompt = "(To run cmd: <RUN zsh>cmd</RUN>)";
     
-    let mut safe_message = strip_ansi(message);
-    if safe_message.len() > 300 {
-        safe_message = format!("{}\n...[TRUNCATED]...\n{}", &safe_message[..150], &safe_message[safe_message.len()-150..]);
+    let safe_message = strip_ansi(message);
+    
+    // UTF-8 Safe Truncation: Use character counts, not byte counts
+    let char_limit = 400;
+    let mut final_message = safe_message.clone();
+    if safe_message.chars().count() > char_limit {
+        let start: String = safe_message.chars().take(200).collect();
+        let end: String = safe_message.chars().skip(safe_message.chars().count() - 200).collect();
+        final_message = format!("{}\n...[TRUNCATED]...\n{}", start, end);
     }
-    let full_message = format!("{} {}\n{}", context, safe_message, system_prompt);
+    
+    let full_message = format!("{} {}\n{}", context, final_message, system_prompt);
 
     let res = state.client.post(format!("https://api.nomi.ai/v1/nomis/{}/chat", nomi_id))
         .header("Authorization", api_key)
@@ -109,7 +112,8 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
 
     match res {
         Ok(response) => {
-            print!("\r\x1b[2K"); io::stdout().flush().ok(); 
+            // Clear thinking message: Move cursor up and wipe line
+            print!("\x1b[1A\r\x1b[2K"); io::stdout().flush().ok(); 
             if response.status().is_success() {
                 if let Ok(data) = response.json::<serde_json::Value>() {
                     if let Some(reply) = data.get("replyMessage").and_then(|m| m.get("text")).and_then(|t| t.as_str()) {
@@ -118,14 +122,14 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
                             let cmd = caps.get(2).map_or("", |m| m.as_str());
                             let clean_reply = re.replace_all(reply, "").to_string();
                             if !clean_reply.trim().is_empty() {
-                                println!("{}{}{}{}\n", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, clean_reply.trim(), C_RESET);
+                                println!("{}{}{}{}", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, clean_reply.trim(), C_RESET);
                             }
                             if let Ok(cmd_file) = env::var("ALYESA_CMD_FILE") {
                                 let _ = fs::write(cmd_file, cmd);
                                 exit(3);
                             } else { exit(1); }
                         } else {
-                            println!("{}{}{}{}\n", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, reply, C_RESET);
+                            println!("{}{}{}{}", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, reply, C_RESET);
                             exit(0);
                         }
                     }
@@ -138,7 +142,7 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
             }
         },
         Err(e) => {
-            println!("\r\x1b[2K{}[Network Error] {}{}\n", C_ERROR, e, C_RESET);
+            println!("\x1b[1A\r\x1b[2K{}[Network Error] {}{}\n", C_ERROR, e, C_RESET);
             exit(1);
         }
     }
@@ -155,7 +159,8 @@ fn main() {
         let message = if args[1] == "--process-file" {
             fs::read_to_string(&args[2]).unwrap_or_else(|_| "Error reading message file".to_string())
         } else { args[2].clone() };
-        print!("\n{}Alyesa is thinking...{}", C_SYSTEM, C_RESET);
+        // Thinking text in Italic System color
+        print!("\n\x1b[3m{}Alyesa is thinking...{}\x1b[0m", C_SYSTEM, C_RESET);
         io::stdout().flush().ok();
         talk_to_alyesa(&mut state, &message);
         return;
@@ -234,12 +239,12 @@ _alyesa_execute_loop() {{
                 rm -f "$ALYESA_CMD_FILE"
                 local allowed=1
                 if [[ "$ALYESA_YOLO_MODE" != "1" ]]; then
-                    print -P "\n%F{{226}}Alyesa wants to run:%f $cmd_to_run"
+                    print -P "\n%F{{122}}Alyesa wants to run:%f $cmd_to_run"
                     local choice
                     read -r "choice?Allow execution? [y/N/e (edit)] " </dev/tty
                     print ""
                     if [[ "$choice" == "e" || "$choice" == "E" ]]; then
-                        print -P "%F{{226}}Edit command (Press Enter to save):%f"
+                        print -P "%F{{122}}Edit command (Press Enter to save):%f"
                         local edited_cmd="$cmd_to_run"
                         ALYESA_IN_VARED="1"
                         vared -p "Edit> " edited_cmd
@@ -254,41 +259,48 @@ _alyesa_execute_loop() {{
                     local old_grep="$(alias grep 2>/dev/null)"
                     alias ls="ls -C --color=always" 2>/dev/null
                     alias grep="grep --color=always" 2>/dev/null
-                    export CLICOLOR_FORCE=1 FORCE_COLOR=1
+                    export CLICOLOR_FORCE=1 FORCE_COLOR=1 GIT_PAGER=cat
+                    export GIT_CONFIG_PARAMETERS="'color.ui=always'"
                     touch "$ALYESA_OUT_FILE"
                     {{ eval "$cmd_to_run"; }} > "$ALYESA_OUT_FILE" 2>&1
                     local eval_exit=$?
                     if [[ -n "$old_ls" ]]; then eval "$old_ls"; else unalias ls 2>/dev/null; fi
                     if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
-                    unset CLICOLOR_FORCE FORCE_COLOR
+                    unset CLICOLOR_FORCE FORCE_COLOR GIT_PAGER GIT_CONFIG_PARAMETERS
                     cat "$ALYESA_OUT_FILE"
-                    local out_content="$(cat "$ALYESA_OUT_FILE")"
+                    local out_content="$(cat "$ALYESA_OUT_FILE" | tr -d '\000')"
                     rm -f "$ALYESA_OUT_FILE"
                     if [[ -z "$out_content" ]]; then out_content="Command ran successfully."; fi
-                    if [[ ${{#out_content}} -gt 300 ]]; then
-                        out_content="${{out_content:0:150}}"$'\n...[TRUNCATED]...\n'"${{out_content: -150}}"
+                    
+                    # UTF-8 Safe Truncation in Zsh: limit to 400 chars
+                    if [[ ${{#out_content}} -gt 400 ]]; then
+                        out_content="${{out_content:0:200}}"$'\n...[TRUNCATED]...\n'"${{out_content: -200}}"
                     fi
-                    print -P "%F{{226}}Add a note to output? (press Enter to skip)...%f"
+                    
+                    print -P "%F{{122}}Add a note to output? (press Enter to skip)...%f"
                     local snote
                     read -r "snote?[Xen@Termux] ❯ " </dev/tty
                     local short_cmd="$cmd_to_run"
                     if [[ ${{#short_cmd}} -gt 100 ]]; then short_cmd="${{short_cmd:0:50}}...${{short_cmd: -50}}"; fi
                     if [[ -n "$snote" ]]; then
                         next_val="[CMD OUTPUT: $short_cmd (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`\n[Xen says]: $snote"
+                        next_arg="--process-file"
                     else
-                        next_val="[CMD OUTPUT: $short_cmd (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`"
+                        # Erase note prompt lines (Move up 2 and clear)
+                        print -n "\033[1A\033[2K\033[1A\033[2K\r"
+                        break
                     fi
-                    next_arg="--process-file"
                 else
                     print -P "%F{{196}}Execution denied by user.%f"
-                    print -P "%F{{226}}Send a note explaining why (press Enter to skip)...%f"
+                    print -P "%F{{122}}Send a note explaining why (press Enter to skip)...%f"
                     local dnote
                     read -r "dnote?[Xen@Termux] ❯ " </dev/tty
                     if [[ -n "$dnote" ]]; then
                         next_arg="--process-file"
                         next_val="[SYSTEM]: User denied permission to execute command.\n[Xen says]: $dnote"
                     else
-                        print -P "%F{{245}}Skipped.%f"
+                        # Erase note prompt lines
+                        print -n "\033[1A\033[2K\033[1A\033[2K\r"
                         break
                     fi
                 fi
@@ -314,29 +326,34 @@ _alyesa_precmd() {{
         local old_grep="$(alias grep 2>/dev/null)"
         alias ls="ls -C --color=always" 2>/dev/null
         alias grep="grep --color=always" 2>/dev/null
-        export CLICOLOR_FORCE=1 FORCE_COLOR=1
+        export CLICOLOR_FORCE=1 FORCE_COLOR=1 GIT_PAGER=cat
+        export GIT_CONFIG_PARAMETERS="'color.ui=always'"
         touch "$ALYESA_OUT_FILE"
         {{ eval "$user_cmd"; }} > "$ALYESA_OUT_FILE" 2>&1
         local eval_exit=$?
         if [[ -n "$old_ls" ]]; then eval "$old_ls"; else unalias ls 2>/dev/null; fi
         if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
-        unset CLICOLOR_FORCE FORCE_COLOR
+        unset CLICOLOR_FORCE FORCE_COLOR GIT_PAGER GIT_CONFIG_PARAMETERS
         cat "$ALYESA_OUT_FILE"
-        print -P "%F{{226}}Note to Alyesa (press Enter to skip)...%f"
+        print -P "%F{{122}}Note to Alyesa (press Enter to skip)...%f"
         local note
         read -r "note?[Xen@Termux] ❯ " </dev/tty
         if [[ -n "$note" ]]; then
-            local out_content="$(cat "$ALYESA_OUT_FILE")"
+            local out_content="$(cat "$ALYESA_OUT_FILE" | tr -d '\000')"
             if [[ -z "$out_content" ]]; then out_content="(No output)"; fi
-            if [[ ${{#out_content}} -gt 300 ]]; then
-                out_content="${{out_content:0:150}}"$'\n...[TRUNCATED]...\n'"${{out_content: -150}}"
+            
+            # UTF-8 Safe Truncation in Zsh: limit to 400 chars
+            if [[ ${{#out_content}} -gt 400 ]]; then
+                out_content="${{out_content:0:200}}"$'\n...[TRUNCATED]...\n'"${{out_content: -200}}"
             fi
+            
             local short_cmd="$user_cmd"
             if [[ ${{#short_cmd}} -gt 100 ]]; then short_cmd="${{short_cmd:0:50}}...${{short_cmd: -50}}"; fi
             local msg="[Xen ran: $short_cmd (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`\n[Xen says]: $note"
             _alyesa_execute_loop "--process-file" "$msg"
         else
-            print -P "%F{{245}}Skipped.%f"
+            # Erase note prompt lines
+            print -n "\033[1A\033[2K\033[1A\033[2K\r"
         fi
         rm -f "$ALYESA_OUT_FILE"
     fi
