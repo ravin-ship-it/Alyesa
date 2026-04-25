@@ -64,7 +64,7 @@ fn build_prompt(cwd: &PathBuf, user: &str, color: &str, is_shell_mode: bool) -> 
     let dir_name = cwd.file_name().unwrap_or_default().to_string_lossy();
     let (branch_str, icons) = get_git_info(cwd);
     let arrow_color = if is_shell_mode && user == "Xen" { C_ORANGE } else { C_MINT };
-    format!("\n{}{}{} {}{}{}{}\n{}{} {}❯{} ", 
+    format!("{}{}{} {}{}{}{}\n{}{} {}❯{} ", 
         C_CYAN, "󰉋 ", C_VIB_GREEN, dir_name, C_RESET, branch_str, icons, color, user, arrow_color, C_RESET)
 }
 
@@ -112,8 +112,8 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
 
     match res {
         Ok(response) => {
-            // Clear thinking message: Move cursor up and wipe line
-            print!("\x1b[1A\r\x1b[2K"); io::stdout().flush().ok(); 
+            // Clear thinking message: Back to start of line and wipe
+            print!("\r\x1b[2K"); io::stdout().flush().ok(); 
             if response.status().is_success() {
                 if let Ok(data) = response.json::<serde_json::Value>() {
                     if let Some(reply) = data.get("replyMessage").and_then(|m| m.get("text")).and_then(|t| t.as_str()) {
@@ -122,14 +122,14 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
                             let cmd = caps.get(2).map_or("", |m| m.as_str());
                             let clean_reply = re.replace_all(reply, "").to_string();
                             if !clean_reply.trim().is_empty() {
-                                println!("{}{}{}{}", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, clean_reply.trim(), C_RESET);
+                                println!("{}{}{}{}\n", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, clean_reply.trim(), C_RESET);
                             }
                             if let Ok(cmd_file) = env::var("ALYESA_CMD_FILE") {
                                 let _ = fs::write(cmd_file, cmd);
                                 exit(3);
                             } else { exit(1); }
                         } else {
-                            println!("{}{}{}{}", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, reply, C_RESET);
+                            println!("{}{}{}{}\n", build_prompt(&state.cwd, "Alyesa", C_ALYESA_NAME, false), C_ALYESA_MSG, reply, C_RESET);
                             exit(0);
                         }
                     }
@@ -137,12 +137,12 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
             } else {
                  let status = response.status();
                  let text = response.text().unwrap_or_default();
-                 println!("{}System Error: API status {} - {}{}\n", C_ERROR, status, text, C_RESET);
+                 println!("{}System Error: API status {} - {}{}", C_ERROR, status, text, C_RESET);
                  exit(1);
             }
         },
         Err(e) => {
-            println!("\x1b[1A\r\x1b[2K{}[Network Error] {}{}\n", C_ERROR, e, C_RESET);
+            println!("\r\x1b[2K{}[Network Error] {}{}", C_ERROR, e, C_RESET);
             exit(1);
         }
     }
@@ -160,7 +160,7 @@ fn main() {
             fs::read_to_string(&args[2]).unwrap_or_else(|_| "Error reading message file".to_string())
         } else { args[2].clone() };
         // Thinking text in Italic System color
-        print!("\n\x1b[3m{}Alyesa is thinking...{}\x1b[0m", C_SYSTEM, C_RESET);
+        print!("\x1b[3m{}Alyesa is thinking...{}\x1b[0m", C_SYSTEM, C_RESET);
         io::stdout().flush().ok();
         talk_to_alyesa(&mut state, &message);
         return;
@@ -216,7 +216,7 @@ _alyesa_arrow_color() {{
     fi
 }}
 
-PROMPT=$'\n${{C_CYAN}}󰉋 ${{C_VIB_GREEN}}%1~${{C_RESET}}$(_alyesa_git_visual)\n%F{{51}}Xen %f$(_alyesa_arrow_color)❯${{C_RESET}} '
+PROMPT=$'${{C_CYAN}}󰉋 ${{C_VIB_GREEN}}%1~${{C_RESET}}$(_alyesa_git_visual)\n%F{{51}}Xen %f$(_alyesa_arrow_color)❯${{C_RESET}} '
 
 ALYESA_QUEUED_QUICK=""
 ALYESA_QUEUED_CHAT=""
@@ -268,6 +268,7 @@ _alyesa_execute_loop() {{
                     if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
                     unset CLICOLOR_FORCE FORCE_COLOR GIT_PAGER GIT_CONFIG_PARAMETERS
                     cat "$ALYESA_OUT_FILE"
+                    print ""
                     local out_content="$(cat "$ALYESA_OUT_FILE" | tr -d '\000')"
                     rm -f "$ALYESA_OUT_FILE"
                     if [[ -z "$out_content" ]]; then out_content="Command ran successfully."; fi
@@ -335,6 +336,7 @@ _alyesa_precmd() {{
         if [[ -n "$old_grep" ]]; then eval "$old_grep"; else unalias grep 2>/dev/null; fi
         unset CLICOLOR_FORCE FORCE_COLOR GIT_PAGER GIT_CONFIG_PARAMETERS
         cat "$ALYESA_OUT_FILE"
+        print ""
         print -P "%F{{122}}Note to Alyesa (press Enter to skip)...%f"
         local note
         read -r "note?[Xen@Termux] ❯ " </dev/tty
@@ -410,12 +412,12 @@ alyesa-enter() {{
         ALYESA_QUEUED_QUICK="${{raw_buf:1}}"
         print -s "$raw_buf"
         ALYESA_SAVED_PROMPT="$PROMPT"
-        PROMPT="$(print -P "$PROMPT")$raw_buf"
+        PROMPT="$(print -nP "$PROMPT")$raw_buf"
         BUFFER=""
         local p="$PROMPT"
         PROMPT=""
         zle reset-prompt
-        print -P "$p"
+        print -nP "$p"
         zle accept-line
         return
     fi
@@ -424,12 +426,12 @@ alyesa-enter() {{
         ALYESA_QUEUED_CHAT="$user_input"
         print -s "$user_input"
         ALYESA_SAVED_PROMPT="$PROMPT"
-        PROMPT="$(print -P "$PROMPT")$user_input"
+        PROMPT="$(print -nP "$PROMPT")$user_input"
         BUFFER=""
         local p="$PROMPT"
         PROMPT=""
         zle reset-prompt
-        print -P "$p"
+        print -nP "$p"
         zle accept-line
         return
     fi
