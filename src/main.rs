@@ -108,7 +108,9 @@ fn talk_to_alyesa(state: &mut State, message: &str) {
                     }
                 }
             } else {
-                 println!("{}System Error: API status {}{}\n", C_ERROR, response.status(), C_RESET);
+                 let status = response.status();
+                 let text = response.text().unwrap_or_default();
+                 println!("{}System Error: API status {} - {}{}\n", C_ERROR, status, text, C_RESET);
                  exit(1);
             }
         },
@@ -169,6 +171,10 @@ _alyesa_git_branch() {{
 
 PROMPT=$'\n%B%F{{51}}󰉋 %F{{47}}%1~%f%F{{175}}$(_alyesa_git_branch)%f%F{{199}} 󱈸%f%F{{208}} 󰚌%f\n%F{{51}}Xen %f${{ALYESA_ARROW_COLOR}}❯%f '
 
+ALYESA_QUEUED_QUICK=""
+ALYESA_QUEUED_CHAT=""
+ALYESA_SAVED_PROMPT=""
+
 _alyesa_execute_loop() {{
     local next_arg="$1"
     local next_val="$2"
@@ -194,9 +200,11 @@ _alyesa_execute_loop() {{
                     read -r "choice?Allow execution? [y/N/e (edit)] " </dev/tty
                     print ""
                     if [[ "$choice" == "e" || "$choice" == "E" ]]; then
-                        print -P "%F{{226}}Edit command:%f"
+                        print -P "%F{{226}}Edit command (Press Enter to save):%f"
                         local edited_cmd="$cmd_to_run"
+                        ALYESA_IN_VARED="1"
                         vared -p "Edit> " edited_cmd
+                        ALYESA_IN_VARED="0"
                         if [[ -n "$edited_cmd" ]]; then
                             cmd_to_run="$edited_cmd"
                         else
@@ -233,14 +241,18 @@ _alyesa_execute_loop() {{
                         out_content="Command ran successfully with no output."
                     fi
                     
+                    if [[ ${{#out_content}} -gt 300 ]]; then
+                        out_content="${{out_content:0:150}}"$'\n...[TRUNCATED]...\n'"${{out_content: -150}}"
+                    fi
+                    
                     print -P "%F{{226}}Add a note to output? (press Enter to skip)...%f"
                     local snote
                     read -r "snote?[Xen@Termux] ❯ " </dev/tty
                     
                     if [[ -n "$snote" ]]; then
-                        next_val="[CMD OUTPUT: $cmd_to_run (Exit: $eval_exit)]\n\`\`\`\n$(echo "$out_content" | tail -c 2000)\n\`\`\`\n[Xen says]: $snote"
+                        next_val="[CMD OUTPUT: $cmd_to_run (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`\n[Xen says]: $snote"
                     else
-                        next_val="[CMD OUTPUT: $cmd_to_run (Exit: $eval_exit)]\n\`\`\`\n$(echo "$out_content" | tail -c 2000)\n\`\`\`"
+                        next_val="[CMD OUTPUT: $cmd_to_run (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`"
                     fi
                     next_arg="--process-file"
                 else
@@ -272,6 +284,11 @@ _alyesa_execute_loop() {{
 }}
 
 _alyesa_precmd() {{
+    if [[ -n "$ALYESA_SAVED_PROMPT" ]]; then
+        PROMPT="$ALYESA_SAVED_PROMPT"
+        ALYESA_SAVED_PROMPT=""
+    fi
+
     if [[ -n "$ALYESA_QUEUED_QUICK" ]]; then
         local user_cmd="$ALYESA_QUEUED_QUICK"
         ALYESA_QUEUED_QUICK=""
@@ -299,7 +316,12 @@ _alyesa_precmd() {{
         if [[ -n "$note" ]]; then
             local out_content="$(cat "$ALYESA_OUT_FILE")"
             if [[ -z "$out_content" ]]; then out_content="(No output)"; fi
-            local msg="[Xen ran: $user_cmd (Exit: $eval_exit)]\n\`\`\`\n$(echo "$out_content" | tail -c 2000)\n\`\`\`\n[Xen says]: $note"
+
+            if [[ ${{#out_content}} -gt 300 ]]; then
+                out_content="${{out_content:0:150}}"$'\n...[TRUNCATED]...\n'"${{out_content: -150}}"
+            fi
+
+            local msg="[Xen ran: $user_cmd (Exit: $eval_exit)]\n\`\`\`\n$out_content\n\`\`\`\n[Xen says]: $note"
             _alyesa_execute_loop "--process-file" "$msg"
         else
             print -P "%F{{245}}Skipped.%f"
@@ -318,6 +340,11 @@ _alyesa_precmd() {{
 precmd_functions+=(_alyesa_precmd)
 
 alyesa-enter() {{
+    if [[ "$ALYESA_IN_VARED" == "1" ]]; then
+        zle accept-line
+        return
+    fi
+
     if [[ -z "$BUFFER" ]]; then
         zle accept-line
         return
@@ -365,7 +392,12 @@ alyesa-enter() {{
         ALYESA_QUEUED_QUICK="${{raw_buf:1}}"
         
         print -s "$raw_buf"
-        zle send-break
+        
+        ALYESA_SAVED_PROMPT="$PROMPT"
+        PROMPT="$(print -P "$PROMPT")$raw_buf"
+        BUFFER=""
+        zle reset-prompt
+        zle accept-line
         return
     fi
 
@@ -374,7 +406,12 @@ alyesa-enter() {{
         ALYESA_QUEUED_CHAT="$user_input"
         
         print -s "$user_input"
-        zle send-break
+        
+        ALYESA_SAVED_PROMPT="$PROMPT"
+        PROMPT="$(print -P "$PROMPT")$user_input"
+        BUFFER=""
+        zle reset-prompt
+        zle accept-line
         return
     fi
 }}
