@@ -12,3 +12,6 @@ crossterm = "0.27"
 rustyline = "13.0"
 dialoguer = "0.12.0"
 dotenvy = "0.15.7"
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+chrono = "0.4"
+textwrap = { version = "0.16.2", features = ["terminal_size"] }

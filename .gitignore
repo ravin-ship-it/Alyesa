@@ -6,3 +6,6 @@ target/
 .test_script.txt
 test_*
 About
+models/
+data/
+.alyesa.env
