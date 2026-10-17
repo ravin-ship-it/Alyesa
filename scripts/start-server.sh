@@ -11,20 +11,25 @@ if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH"
     exit 1
 fi
-
 # Ensure port is clear for the new model
-pkill -f "llama-server --port $PORT" >/dev/null 2>&1
+if command -v fuser >/dev/null 2>&1; then
+    fuser -k "$PORT/tcp" >/dev/null 2>&1
+else
+    pkill -f "llama-server --port $PORT" >/dev/null 2>&1
+fi
 sleep 1
 
-# Note: Modern llama-server enables prompt caching by default.
-# We use --cache-reuse to speed up similar prompts.
+# GPU Offloading (Default to 99 if supported, or 0 for CPU only)
+NGL="${ALYESA_NGL:-99}"
 
 nohup /data/data/com.termux/files/home/llama.cpp/build/bin/llama-server \
   -m "$MODEL_PATH" \
+  -ngl "$NGL" \
   --port "$PORT" \
   -c 4096 \
-  -t $(nproc) \
+  -t 4 \
   --embedding \
   --cache-reuse 256 \
   --alias "alyesa-$SLOT" \
-  >/dev/null 2>&1 &
+  --no-mmap \
+  >> "$ROOT/server.log" 2>&1 &

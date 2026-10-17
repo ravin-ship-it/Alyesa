@@ -4,7 +4,9 @@ These models are specifically chosen because they perform exceptionally well in 
 
 ### 1. The Communicator / CEO
 **Role:** Understands Xen, orchestrates tasks, and delivers final polished output.
-*   **Model:** Llama-3.2-3B-Instruct (Already Installed!)
+*   **Model:** **Llama-3.2-3B-Instruct**
+*   **Why:** Replaced Gemma. It has strong instruction following, perfect persona adherence, and is highly optimized for agentic workflows (the CEO slot).
+*   **Link:** `https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF`
 
 ### 2. The Researcher
 **Role:** Deep reasoning, factual retrieval, and breaking complex problems down into step-by-step logic structures for the coders.
